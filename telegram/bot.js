@@ -1,236 +1,105 @@
 const TelegramBot = require("node-telegram-bot-api");
 const config = require("../config");
-const { getSocket } = require("../whatsapp/connection");
 
 function startTelegramBot() {
-  const bot = new TelegramBot(config.telegramToken, {
-    polling: true
-  });
+  if (!config.telegramToken) {
+    throw new Error("TELEGRAM_TOKEN is not configured. Add it as a Render environment variable.");
+  }
 
-  bot.onText(/\/start/, (msg) => {
-  const welcomeText = `
+  const bot = new TelegramBot(config.telegramToken, { polling: true });
+  const isAdmin = (msg) => Boolean(config.telegramAdminId) &&
+    String(msg.from?.id) === String(config.telegramAdminId);
+  const adminOnly = (msg) => {
+    if (isAdmin(msg)) return true;
+    bot.sendMessage(msg.chat.id, "❌ This command is restricted to the bot owner.");
+    return false;
+  };
+
+  bot.onText(/^\/start(?:@\w+)?$/, (msg) => {
+    const firstName = msg.from?.first_name || "there";
+    const welcomeText = `
 🤖 Welcome to SIMON TECH BOT
 
-👋 Hey ${msg.from.first_name}!
+👋 Hey ${firstName}!
 
-This is a public WhatsApp bot.
-
-🆔 Your Info:
-• ID: ${msg.from.id}
-• Name: ${msg.from.first_name}
+This is a public WhatsApp bot. Basic commands are available to everyone.
 
 📖 Commands:
 /start
 /help
 /ping
 /status
-/pair <number>
+/info
 /menu
 
-⚠️ This bot is public — everyone can use available features.
+🔒 Owner-only commands are protected.
 `;
-
-  bot.sendMessage(msg.chat.id, welcomeText, { parse_mode: "Markdown" });
-});
-
-⚠️ This bot is public and available for everyone.
-`;
-
-I should put it like this
-
-⚠️ This bot is public — everyone can use available features.
-
-    bot.sendMessage(msg.chat.id, welcomeText, { parse_mode: "Markdown" });
+    bot.sendMessage(msg.chat.id, welcomeText);
   });
 
-  // Help command
-  bot.onText(/\/help/, (msg) => {
+  bot.onText(/^\/help(?:@\w+)?$/, (msg) => {
     const helpText = `
 📖 *SIMON TECH BOT - Commands Guide*
 
-🎯 *Basic Commands:*
+🎯 *Public Commands:*
 /start - Welcome message
 /help - This help message
 /ping - Check if bot is responding
 /status - Get bot status
 /info - Bot information
+/menu - Show the menu
 
-
-⚠️ This bot is public — everyone can use available features.
+🔒 *Owner-only commands:*
 /pair <number> - Pair WhatsApp number
 /qr - Get WhatsApp QR code
 /restart - Restart the bot
 /broadcast <message> - Send broadcast
 /logs - View bot logs
 /stats - Bot statistics
-
-🔗 *Integration:*
-/link <number> - Link WhatsApp to Telegram
-/unlink - Unlink WhatsApp
-/session - Check WhatsApp session
-
-Use these commands to control and monitor SIMON TECH BOT.
 `;
-
     bot.sendMessage(msg.chat.id, helpText, { parse_mode: "Markdown" });
   });
 
-  // Ping command
-  bot.onText(/\/ping/, (msg) => {
-    const start = Date.now();
-    bot.sendMessage(msg.chat.id, "🏓 Pinging...").then(() => {
-      const ping = Date.now() - start;
-      bot.editMessageText(`🏓 *Pong!*\nLatency: \`${ping}ms\``, {
+  bot.onText(/^\/ping(?:@\w+)?$/, (msg) => {
+    const started = Date.now();
+    bot.sendMessage(msg.chat.id, "🏓 Pinging...").then((sent) => {
+      const ping = Date.now() - started;
+      return bot.editMessageText(`🏓 *Pong!*\nLatency: \`${ping}ms\``, {
         chat_id: msg.chat.id,
-        message_id: msg.message_id + 1,
+        message_id: sent.message_id,
         parse_mode: "Markdown"
-      }).catch(() => {
-        bot.sendMessage(msg.chat.id, `🏓 *Pong!*\nLatency: \`${ping}ms\``, {
-          parse_mode: "Markdown"
-        });
       });
-    });
+    }).catch(() => {});
   });
 
-  // Status command
-  bot.onText(/\/status/, (msg) => {
+  bot.onText(/^\/status(?:@\w+)?$/, (msg) => {
     const uptime = Math.floor(process.uptime());
     const hours = Math.floor(uptime / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
     const seconds = uptime % 60;
-
-    const statusText = `
-🟢 *Bot Status: ONLINE*
-
-📊 *System Info:*
-• Status: Active ✅
-• Version: ${config.version}
-• Mode: ${config.botMode.toUpperCase()}
-• Uptime: ${hours}h ${minutes}m ${seconds}s
-• Bot Name: ${config.botName}
-
-🧠 *Resources:*
-• Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB
-• Node Version: ${process.version}
-
-📱 *WhatsApp:*
-• Connection: Checking...
-• Prefix: ${config.prefix}
-• Commands: 800+
-
-⚡ *Performance:*
-• Response Time: Fast
-• Stability: Stable
-
-`;
-
+    const statusText = `🟢 *Bot Status: ONLINE*\n\n• Version: ${config.version}\n• Mode: ${config.botMode.toUpperCase()}\n• Uptime: ${hours}h ${minutes}m ${seconds}s\n• Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB\n• Node: ${process.version}`;
     bot.sendMessage(msg.chat.id, statusText, { parse_mode: "Markdown" });
   });
 
-  // Info command
-  bot.onText(/\/info/, (msg) => {
-    const infoText = `
-ℹ️ *Bot Information*
-
-🤖 *Bot Details:*
-• Name: ${config.botName}
-• Version: ${config.version}
-• Type: WhatsApp Multi-Device Bot
-• Framework: Baileys + Telegram Bot API
-
-👨‍💻 *Developer:*
-• Name: SIMON TECH
-• WhatsApp: ${config.owner}
-
-🔧 *Features:*
-• 800+ Commands
-• Multi-Device Support
-• Telegram Integration
-• Auto Replies
-• Command Prefix System
-• Owner Controls
-
-🚀 *Platforms:*
-• WhatsApp ✅
-• Telegram ✅
-• Railway ✅
-• Replit ✅
-
-📚 *Technologies:*
-• Node.js
-• Baileys Library
-• node-telegram-bot-api
-• Express.js
-
-🎯 *Use Cases:*
-• Automation
-• Fun Features
-• Group Management
-• Data Processing
-
-`;
-
-    bot.sendMessage(msg.chat.id, infoText, { parse_mode: "Markdown" });
+  bot.onText(/^\/info(?:@\w+)?$/, (msg) => {
+    bot.sendMessage(msg.chat.id, `ℹ️ ${config.botName}\nVersion: ${config.version}\nType: WhatsApp Multi-Device Bot`);
   });
 
-  // Menu command
-  bot.onText(/\/menu/, (msg) => {
-    const menuText = `
-╭──────────────────────────────╮
-│    🤖 SIMON TECH BOT 2.0     │
-│   WhatsApp Multi-Device      │
-╰──────────────────────────────╯
-
-├⊷ 👑 OWNER (50 Commands)
-├⊷ ⚙️ SYSTEM (50 Commands)
-├⊷ 👤 PROFILE (40 Commands)
-├⊷ 👥 GROUP (80 Commands)
-├⊷ 🔐 SECURITY (60 Commands)
-├⊷ 🧠 AI (100 Commands)
-├⊷ 📥 DOWNLOADER (80 Commands)
-├⊷ 🖼️ MEDIA (60 Commands)
-├⊷ 🎮 GAMES (80 Commands)
-├⊷ 💰 ECONOMY (80 Commands)
-
-📊 TOTAL: 800+ Commands
-⚡ STATUS: ONLINE 🟢
-👑 OWNER: SIMON TECH
-
-Use .menu in WhatsApp to see full menu
-`;
-
-    bot.sendMessage(msg.chat.id, menuText);
+  bot.onText(/^\/menu(?:@\w+)?$/, (msg) => {
+    bot.sendMessage(msg.chat.id, "🤖 SIMON TECH BOT 2.0\n\nUse .menu in WhatsApp to see the full menu.");
   });
 
-  // Pair command (Owner only)
-  bot.onText(/\/pair (.+)/, async (msg, match) => {
-    // Check if owner
-    if (msg.from.id.toString() !== config.owner) {
-      return bot.sendMessage(msg.chat.id, "❌ Only the bot owner can use this command.");
-    }
-
-    const number = match[1];
-
-    bot.sendMessage(
-      msg.chat.id,
-      `⏳ Generating Pair Code for: +${number}\n\n⚠️ Feature coming soon in next update.`,
-      { parse_mode: "Markdown" }
-    );
+  bot.onText(/^\/pair\s+(.+)$/, async (msg, match) => {
+    if (!adminOnly(msg)) return;
+    await bot.sendMessage(msg.chat.id, `⏳ Pairing requested for +${match[1].trim()}\n\n⚠️ Feature coming soon.`);
   });
 
-  // QR command (Owner only)
-  bot.onText(/\/qr/, async (msg) => {
-    if (msg.from.id.toString() !== config.owner) {
-      return bot.sendMessage(msg.chat.id, "❌ Only the bot owner can use this command.");
-    }
-
-    bot.sendMessage(
-      msg.chat.id,
-      "📸 *WhatsApp QR Code*\n\nOpen WhatsApp on your phone and scan the QR code that appears in the terminal.",
-      { parse_mode: "Markdown" }
-    );
+  bot.onText(/^\/qr(?:@\w+)?$/, async (msg) => {
+    if (!adminOnly(msg)) return;
+    await bot.sendMessage(msg.chat.id, "📸 WhatsApp QR code is available in the server terminal.");
   });
 
+  bot.on("polling_error", (error) => console.error("Telegram polling error:", error.message));
   console.log("✅ Telegram Bot Started");
 }
 

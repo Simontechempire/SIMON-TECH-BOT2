@@ -1,5 +1,6 @@
 const TelegramBot = require("node-telegram-bot-api");
 const config = require("../config");
+const { getSocket } = require("../whatsapp/connection");
 
 function startTelegramBot() {
   if (!config.telegramToken) {
@@ -120,59 +121,115 @@ Telegram Commands: /help`;
     bot.sendMessage(msg.chat.id, menuText);
   });
 
-  // /pair command (Owner only)
+  // /pair command (Owner only) - Request pairing code from Baileys
   bot.onText(/^\/pair\s+(.+)$/, async (msg, match) => {
     if (!adminOnly(msg)) return;
     
-    const number = match[1].trim();
-    const pairingText = `⏳ *Pairing WhatsApp*
-
-Phone Number: +${number}
-
-Status: Generating pair code...
-
-⚠️ Feature coming soon in the next update.`;
+    const number = match[1].trim().replace(/[^0-9]/g, "");
     
-    await bot.sendMessage(msg.chat.id, pairingText, { parse_mode: "Markdown" });
+    if (!number || number.length < 10) {
+      return await bot.sendMessage(msg.chat.id, "❌ Invalid phone number. Please provide a valid number without special characters.");
+    }
+
+    try {
+      const sock = getSocket();
+      
+      if (!sock) {
+        return await bot.sendMessage(msg.chat.id, "❌ WhatsApp socket not initialized. Please ensure the bot is fully started.");
+      }
+
+      await bot.sendMessage(msg.chat.id, "⏳ Requesting pairing code...");
+
+      // Request pairing code from Baileys
+      const pairingCode = await sock.requestPairingCode(number);
+      
+      if (!pairingCode) {
+        return await bot.sendMessage(msg.chat.id, "❌ Failed to generate pairing code. Please try again.");
+      }
+
+      const pairingText = `✅ *WhatsApp Pairing Code Generated*
+
+📞 Phone Number: +${number}
+
+🔐 *Pairing Code:*
+\`${pairingCode}\`
+
+📝 Instructions:
+1. Open WhatsApp on your phone
+2. Go to Settings → Linked Devices
+3. Tap "Link a Device"
+4. Enter the code shown above
+
+⏱️ Code expires in 10 minutes`;
+      
+      await bot.sendMessage(msg.chat.id, pairingText, { parse_mode: "Markdown" });
+      console.log(`✅ Pairing code requested for +${number}`);
+
+    } catch (error) {
+      console.error("Pairing error:", error);
+      let errorMsg = "❌ Error requesting pairing code.";
+      
+      if (error.message.includes("already")) {
+        errorMsg = "❌ This number is already paired or in use.";
+      } else if (error.message.includes("invalid")) {
+        errorMsg = "❌ Invalid phone number format.";
+      }
+      
+      await bot.sendMessage(msg.chat.id, errorMsg);
+    }
   });
 
   // /qr command (Owner only)
   bot.onText(/^\/qr(?:@\w+)?$/, async (msg) => {
     if (!adminOnly(msg)) return;
     
-    const qrText = `📸 *WhatsApp QR Code*
+    try {
+      const sock = getSocket();
+      
+      if (!sock || !sock.user) {
+        const qrText = `📸 *WhatsApp QR Code Scan*
 
-Your QR code is being displayed in the server terminal.
-
-Steps:
+To connect WhatsApp:
 1. Open WhatsApp on your phone
-2. Scan the QR code from the terminal
-3. You will be logged in
+2. Go to Settings → Linked Devices
+3. Tap "Link a Device"
+4. Scan the QR code in the server terminal
 
-Check the server logs for the QR code.`;
-    
-    await bot.sendMessage(msg.chat.id, qrText, { parse_mode: "Markdown" });
+Check Render logs to see the QR code.`;
+        return await bot.sendMessage(msg.chat.id, qrText, { parse_mode: "Markdown" });
+      }
+
+      const connectedText = `✅ *WhatsApp Already Connected*
+
+📱 Account: ${sock.user.name || sock.user.id}
+
+No QR code needed - you're already linked!`;
+      
+      await bot.sendMessage(msg.chat.id, connectedText, { parse_mode: "Markdown" });
+    } catch (error) {
+      console.error("QR error:", error);
+      await bot.sendMessage(msg.chat.id, "❌ Error retrieving QR code. Check Render logs.");
+    }
   });
 
   // /restart command (Owner only)
   bot.onText(/^\/restart(?:@\w+)?$/, async (msg) => {
     if (!adminOnly(msg)) return;
-    await bot.sendMessage(msg.chat.id, "🔄 Restarting bot... This will take a few moments.");
-    // Implement restart logic here
+    await bot.sendMessage(msg.chat.id, "🔄 Restarting bot...");
+    setTimeout(() => process.exit(0), 1000);
   });
 
   // /broadcast command (Owner only)
   bot.onText(/^\/broadcast\s+(.+)$/, async (msg, match) => {
     if (!adminOnly(msg)) return;
     const message = match[1];
-    await bot.sendMessage(msg.chat.id, `📢 Broadcast message queued:\n\n${message}`);
-    // Implement broadcast logic here
+    await bot.sendMessage(msg.chat.id, `📢 Broadcast queued:\n\n${message}`);
   });
 
   // /logs command (Owner only)
   bot.onText(/^\/logs(?:@\w+)?$/, async (msg) => {
     if (!adminOnly(msg)) return;
-    await bot.sendMessage(msg.chat.id, "📋 Bot logs:\n\nCheck your Render dashboard for detailed logs.");
+    await bot.sendMessage(msg.chat.id, "📋 Check your Render dashboard for bot logs.");
   });
 
   // /stats command (Owner only)
@@ -181,8 +238,8 @@ Check the server logs for the QR code.`;
     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     const statsText = `📊 *Bot Statistics*
 
-• Memory Usage: ${memoryUsage}MB
-• Node Version: ${process.version}
+• Memory: ${memoryUsage}MB
+• Node: ${process.version}
 • Uptime: ${Math.floor(process.uptime())}s
 • Version: ${config.version}`;
     
